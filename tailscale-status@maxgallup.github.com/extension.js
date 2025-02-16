@@ -21,13 +21,21 @@ const disabledString = "⚫";
 const ownConnectionString = "💻";
 
 class TailscaleNode {
-    constructor(_name, _address, _online, _offersExit, _usesExit, _isSelf) {
+    /**
+     * @param {boolean} _isMullvadExitNode
+     * @param {string[]} _groupPath - e.g. ["Mullvad", "Norway", "Oslo"]
+     */
+    constructor(_name, _address, _online, _offersExit, _usesExit, _isSelf, _isMullvadExitNode, _groupPath) {
         this.name = _name;
         this.address = _address;
         this.online = _online;
         this.offersExit = _offersExit;
         this.usesExit = _usesExit;
         this.isSelf = _isSelf;
+        /** We probably want to ignore these for anything that's not picking an exit node. */
+        this.isMullvadExitNode = _isMullvadExitNode;
+        /** Currently just used to group the Mullvad exit nodes, but code is structured to take arbitrary groupings. */
+        this.groupPath = _groupPath;
     }
 
     get line() {
@@ -43,7 +51,11 @@ class TailscaleNode {
     }
 }
 
+/** @type {TailscaleNode[]} */
 let nodes = [];
+/** @typedef {{nodes: TailscaleNode[], subTrees: {[k: string]: NodesTree}}} NodesTree */
+/** @type {NodesTree} */
+let nodesTree = { nodes: [], subTrees: {} }
 let accounts = [];
 let currentAccount = "(click Update Accounts List)";
 
@@ -85,6 +97,7 @@ function myError(string) {
 
 function extractNodeInfo(json) {
     nodes = [];
+    nodesTree = { nodes: [], subTrees: {} };
 
     var me = json.Self;
     if (me.TailscaleIPs != null) {
@@ -94,12 +107,26 @@ function extractNodeInfo(json) {
             me.Online,
             me.ExitNodeOption,
             me.ExitNode,
-            true
+            true,
+            false,
+            []
         )
         );
     }
     for (let p in json.Peer) {
         var n = json.Peer[p];
+        let isMullvad = false;
+        let groupPath = [];
+        // We special-case these guys. Tailscale clients sometimes refer to "Location-based exit nodes",
+        // perhaps in future it should be done by nodes with a .Location instead?
+        if (n.Tags?.includes('tag:mullvad-exit-node')) {
+            isMullvad = true;
+            if (n.Location?.Country && n.Location?.City) {
+                groupPath = ["Mullvad", n.Location.Country, n.Location.City];
+            } else {
+                groupPath = ["Mullvad"]
+            }
+        }
         if (n.TailscaleIPs != null) {
             nodes.push(new TailscaleNode(
                 n.DNSName.split(".")[0],
@@ -107,12 +134,26 @@ function extractNodeInfo(json) {
                 n.Online,
                 n.ExitNodeOption,
                 n.ExitNode,
-                false
+                false,
+                isMullvad,
+                groupPath
             ));
         }
 
     }
     nodes.sort(sortNodes)
+
+    for (const n of nodes) {
+        let t = nodesTree;
+        // recurse into / initialize the tree, one level per entry in groupPath
+        for (const p of n.groupPath) {
+            if (!(p in t.subTrees)) {
+                t.subTrees[p] = { nodes: [], subTrees: {} }
+            }
+            t = t.subTrees[p]
+        }
+        t.nodes.push(n);
+    }
 }
 
 function sortNodes(a, b) {
@@ -233,34 +274,95 @@ function refreshNodesMenu() {
     });
 }
 
+/**
+ * This is a PopupSubMenuMenuItem with some patches to make nested submenus work,
+ * by default they don't work at all.
+ */
+const FixedSubMenuMenuItem = GObject.registerClass(
+class FixedSubMenuMenuItem extends PopupMenu.PopupSubMenuMenuItem {
+    _init(name, rootScroller) {
+        super._init(name);
+        this.rootScroller = rootScroller;
 
+        // Monkey-patch scrolling - we'll leave scrolling to the rootScroller.
+        // Disable scrolling on our own menu's ScrollBox.
+        this.menu._needsScrollbar = () => false;
+        this.menu.actor.set_mouse_scrolling(false);
+    }
+
+    _subMenuOpenStateChanged(menu, open) {
+        super._subMenuOpenStateChanged(menu, open);
+
+        // we've changed the height of a submenu. Gnome doesn't handle this properly,
+        // so we need to go and tell the rootScroller that its height has changed.
+        // Copy-paste from PopupSubMenu.open().
+        {
+            const needsScrollbar = this.rootScroller._needsScrollbar();
+
+            this.rootScroller.actor.vscrollbar_policy = St.PolicyType.ALWAYS;
+
+            if (needsScrollbar)
+                this.rootScroller.actor.add_style_pseudo_class('scrolled');
+            else
+                this.rootScroller.actor.remove_style_pseudo_class('scrolled');
+        }
+
+    }
+}
+);
+
+/**
+ * @param {PopupMenu.PopupMenuBase} menu
+ * @param {NodesTree} t
+ * @param {string} indent
+ * @param {PopupMenu.PopupMenuBase | null} rootScroller
+ *   we need to keep track of the ExitNodes popupmenu so we can fix Gnome's buggy handling of nested
+ *   submenus.
+ */
+function _refreshExitNodesMenu(menu, t, indent = '', rootScroller = null) {
+    let usesExit = false;
+
+    // Add any nodes to this level of the tree
+    for (const node of t.nodes) {
+        if (!node.offersExit) {
+            continue;
+        }
+
+        const item = new PopupMenu.PopupMenuItem(indent+node.name)
+        item.connect('activate', () => {
+            cmdTailscale({ args: ["up", "--exit-node=" + node.address, "--reset"] })
+        });
+        item.setOrnament(node.usesExit ? 1 : 0)
+        menu.addMenuItem(item);
+        usesExit ||= node.usesExit;
+    }
+
+    rootScroller = rootScroller || menu;
+
+    // Add any subtress to this level of the tree
+    for (const [name, st] of Object.entries(t.subTrees)) {
+        const subMenu = new FixedSubMenuMenuItem(indent+name, rootScroller);
+
+        const stUsesExit = _refreshExitNodesMenu(subMenu.menu, st, indent+' ', rootScroller)
+
+        subMenu.setOrnament(stUsesExit ? 1 : 0)
+        menu.addMenuItem(subMenu)
+        usesExit ||= stUsesExit
+    }
+
+    return usesExit
+}
 
 function refreshExitNodesMenu() {
     exitNodeMenu.menu.removeAll();
-    var uses_exit = false;
-    nodes.sort(sortByName);
-    nodes.forEach((node) => {
-        if (node.offersExit) {
-            var item = new PopupMenu.PopupMenuItem(node.name)
-            item.connect('activate', () => {
-                cmdTailscale({ args: ["up", "--exit-node=" + node.address, "--reset"] })
-            });
-            if (node.usesExit) {
-                item.setOrnament(1);
-                exitNodeMenu.menu.addMenuItem(item);
-                uses_exit = true;
-            } else {
-                item.setOrnament(0);
-                exitNodeMenu.menu.addMenuItem(item);
-            }
-        }
-    })
+
+    const usesExit = _refreshExitNodesMenu(exitNodeMenu.menu, nodesTree);
 
     var noneItem = new PopupMenu.PopupMenuItem('None');
     noneItem.connect('activate', () => {
-        cmdTailscale({args: ["up", "--exit-node=", "--reset"] });
+        cmdTailscale({ args: ["up", "--exit-node=", "--reset"] });
     });
-    (uses_exit) ? noneItem.setOrnament(0) : noneItem.setOrnament(1);
+    noneItem.setOrnament(usesExit ? 0 : 1)
     exitNodeMenu.menu.addMenuItem(noneItem, 0);
 }
 
@@ -478,6 +580,10 @@ const TailscalePopup = GObject.registerClass(
                 }
             });
 
+            // monkey-patch to nuke this property - it's buggy, if submenus are in a tree,
+            // then it causes the parent to close when a child is opened, even though the parent
+            // should stay open so you can see the child!
+            this.menu._setOpenedSubMenu = () => {};``
 
             // ------ MAIN STATUS ITEM ------
             statusItem = new PopupMenu.PopupMenuItem(statusString, { reactive: false });
