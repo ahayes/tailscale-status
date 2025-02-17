@@ -141,7 +141,7 @@ function extractNodeInfo(json) {
         }
 
     }
-    nodes.sort(sortNodes)
+    nodes.sort(combineSort(sortProp('isSelf'), sortProp('online', 'desc'), sortArrProp('groupPath'), sortProp('name')))
 
     for (const n of nodes) {
         let t = nodesTree;
@@ -156,32 +156,48 @@ function extractNodeInfo(json) {
     }
 }
 
-function sortNodes(a, b) {
-    if (a.isSelf == true && b.isSelf == false) {
-        return -1;
-    }
-
-    if (a.online == true && b.online == true) {
-        return 0;
-    } else if (a.online == true && b.online == false) {
-        return -1;
-    } else if (a.online == false && b.online == true) {
-        return 1;
-    } else if (a.online == false && b.online == false) {
-        return 0;
-    }
-}
-
-function sortByName(a, b) {
-    if (a.name > b.name) {
-        return 1;
-    } else if (a.name == b.name) {
-        return 0;
-    } else {
-        return -1;
+function sortArrProp(p) {
+    return function comp(a, b) {
+        const [_aa, _bb] = [a[p] ?? [], b[p] ?? []]
+        for (let i = 0; i < Math.max(_aa.length, _bb.length); i++) {
+            const [_a, _b] = [_aa[i], _bb[i]]
+            if (_a < _b) {
+                return -1;
+            } else if (_b < _a) {
+                return 1;
+            } else {
+                continue;
+            }
+        }
     }
 }
-
+/** @param {'desc' | undefined} desc - descending sort */
+function sortProp(p, desc=undefined) {
+    return function comp(a, b) {
+        if (desc == 'desc') {
+            [b, a] = [a, b];
+        }
+        const [_a, _b] = [a[p], b[p]];
+        if (_a < _b) {
+            return -1;
+        } else if (_b < _a) {
+            return 1;
+        } else {
+            return 0;
+        }
+    }
+}
+function combineSort(...sorters) {
+    return function comp(a, b) {
+        for (const fn of sorters) {
+            const res = fn(a, b);
+            if (res != 0) {
+                return res
+            }
+            // else this sorter considers them equal, try the next one.
+        }
+    }
+}
 function getUsername(json) {
     let id = 0
     if (json.Self.UserID != null) {
