@@ -280,14 +280,18 @@ function setAllItems(b) {
 
 function refreshNodesMenu() {
     nodesMenu.menu.removeAll();
-    nodes.forEach((node) => {
+    for (const node of nodes) {
+        if (node.isMullvadExitNode) {
+            continue;
+        }
+
         let item = new PopupMenu.PopupMenuItem(node.line)
         item.connect('activate', () => {
             St.Clipboard.get_default().set_text(St.ClipboardType.CLIPBOARD, node.address);
             Main.notify("Copied " + node.address + " to clipboard! (" + node.name + ")");
         });
         nodesMenu.menu.addMenuItem(item);
-    });
+    };
 }
 
 /**
@@ -384,15 +388,17 @@ function refreshExitNodesMenu() {
 
 function refreshSendMenu() {
     sendMenu.menu.removeAll();
-    nodes.forEach((node) => {
-        if (node.online && !node.isSelf) {
-            var item = new PopupMenu.PopupMenuItem(node.name)
-            item.connect('activate', () => {
-                sendFiles(node.address);
-            });
-            sendMenu.menu.addMenuItem(item);
+    for (const node of nodes) {
+        if (!node.online || node.isSelf || node.isMullvadExitNode) {
+            continue;
         }
-    })
+
+        var item = new PopupMenu.PopupMenuItem(node.name)
+        item.connect('activate', () => {
+            sendFiles(node.address);
+        });
+        sendMenu.menu.addMenuItem(item);
+    }
 }
 
 function sendFiles(dest) {
