@@ -21,13 +21,21 @@ const disabledString = "⚫";
 const ownConnectionString = "💻";
 
 class TailscaleNode {
-    constructor(_name, _address, _online, _offersExit, _usesExit, _isSelf) {
+    /**
+     * @param {boolean} _isMullvadExitNode
+     * @param {string[]} _groupPath - e.g. ["Mullvad", "Norway", "Oslo"]
+     */
+    constructor(_name, _address, _online, _offersExit, _usesExit, _isSelf, _isMullvadExitNode, _groupPath) {
         this.name = _name;
         this.address = _address;
         this.online = _online;
         this.offersExit = _offersExit;
         this.usesExit = _usesExit;
         this.isSelf = _isSelf;
+        /** We probably want to ignore these for anything that's not picking an exit node. */
+        this.isMullvadExitNode = _isMullvadExitNode;
+        /** Currently just used to group the Mullvad exit nodes, but code is structured to take arbitrary groupings. */
+        this.groupPath = _groupPath;
     }
 
     get line() {
@@ -43,7 +51,11 @@ class TailscaleNode {
     }
 }
 
+/** @type {TailscaleNode[]} */
 let nodes = [];
+/** @typedef {{nodes: TailscaleNode[], subTrees: {[k: string]: NodesTree}}} NodesTree */
+/** @type {NodesTree} */
+let nodesTree = { nodes: [], subTrees: {} }
 let accounts = [];
 let currentAccount = "(click Update Accounts List)";
 
@@ -85,6 +97,7 @@ function myError(string) {
 
 function extractNodeInfo(json) {
     nodes = [];
+    nodesTree = { nodes: [], subTrees: {} };
 
     var me = json.Self;
     if (me.TailscaleIPs != null) {
@@ -94,12 +107,26 @@ function extractNodeInfo(json) {
             me.Online,
             me.ExitNodeOption,
             me.ExitNode,
-            true
+            true,
+            false,
+            []
         )
         );
     }
     for (let p in json.Peer) {
         var n = json.Peer[p];
+        let isMullvad = false;
+        let groupPath = [];
+        // We special-case these guys. Tailscale clients sometimes refer to "Location-based exit nodes",
+        // perhaps in future it should be done by nodes with a .Location instead?
+        if (n.Tags?.includes('tag:mullvad-exit-node')) {
+            isMullvad = true;
+            if (n.Location?.Country && n.Location?.City) {
+                groupPath = ["Mullvad", n.Location.Country, n.Location.City];
+            } else {
+                groupPath = ["Mullvad"]
+            }
+        }
         if (n.TailscaleIPs != null) {
             nodes.push(new TailscaleNode(
                 n.DNSName.split(".")[0],
@@ -107,40 +134,70 @@ function extractNodeInfo(json) {
                 n.Online,
                 n.ExitNodeOption,
                 n.ExitNode,
-                false
+                false,
+                isMullvad,
+                groupPath
             ));
         }
 
     }
-    nodes.sort(sortNodes)
-}
+    nodes.sort(combineSort(sortProp('isSelf'), sortProp('online', 'desc'), sortArrProp('groupPath'), sortProp('name')))
 
-function sortNodes(a, b) {
-    if (a.isSelf == true && b.isSelf == false) {
-        return -1;
-    }
-
-    if (a.online == true && b.online == true) {
-        return 0;
-    } else if (a.online == true && b.online == false) {
-        return -1;
-    } else if (a.online == false && b.online == true) {
-        return 1;
-    } else if (a.online == false && b.online == false) {
-        return 0;
+    for (const n of nodes) {
+        let t = nodesTree;
+        // recurse into / initialize the tree, one level per entry in groupPath
+        for (const p of n.groupPath) {
+            if (!(p in t.subTrees)) {
+                t.subTrees[p] = { nodes: [], subTrees: {} }
+            }
+            t = t.subTrees[p]
+        }
+        t.nodes.push(n);
     }
 }
 
-function sortByName(a, b) {
-    if (a.name > b.name) {
-        return 1;
-    } else if (a.name == b.name) {
-        return 0;
-    } else {
-        return -1;
+function sortArrProp(p) {
+    return function comp(a, b) {
+        const [_aa, _bb] = [a[p] ?? [], b[p] ?? []]
+        for (let i = 0; i < Math.max(_aa.length, _bb.length); i++) {
+            const [_a, _b] = [_aa[i], _bb[i]]
+            if (_a < _b) {
+                return -1;
+            } else if (_b < _a) {
+                return 1;
+            } else {
+                continue;
+            }
+        }
     }
 }
-
+/** @param {'desc' | undefined} desc - descending sort */
+function sortProp(p, desc=undefined) {
+    return function comp(a, b) {
+        if (desc == 'desc') {
+            [b, a] = [a, b];
+        }
+        const [_a, _b] = [a[p], b[p]];
+        if (_a < _b) {
+            return -1;
+        } else if (_b < _a) {
+            return 1;
+        } else {
+            return 0;
+        }
+    }
+}
+function combineSort(...sorters) {
+    return function comp(a, b) {
+        for (const fn of sorters) {
+            const res = fn(a, b);
+            if (res != 0) {
+                return res
+            }
+            // else this sorter considers them equal, try the next one.
+        }
+    }
+}
 function getUsername(json) {
     let id = 0
     if (json.Self.UserID != null) {
@@ -195,7 +252,7 @@ function setStatus(json) {
             authItem.sensitive = true;
             statusItem.label.text = statusString + "needs login";
             authItem.label.text = "Click to Login"
-            
+
             setAllItems(false);
             nodes = [];
             break;
@@ -223,58 +280,125 @@ function setAllItems(b) {
 
 function refreshNodesMenu() {
     nodesMenu.menu.removeAll();
-    nodes.forEach((node) => {
+    for (const node of nodes) {
+        if (node.isMullvadExitNode) {
+            continue;
+        }
+
         let item = new PopupMenu.PopupMenuItem(node.line)
         item.connect('activate', () => {
             St.Clipboard.get_default().set_text(St.ClipboardType.CLIPBOARD, node.address);
             Main.notify("Copied " + node.address + " to clipboard! (" + node.name + ")");
         });
         nodesMenu.menu.addMenuItem(item);
-    });
+    };
 }
 
+/**
+ * This is a PopupSubMenuMenuItem with some patches to make nested submenus work,
+ * by default they don't work at all.
+ */
+const FixedSubMenuMenuItem = GObject.registerClass(
+class FixedSubMenuMenuItem extends PopupMenu.PopupSubMenuMenuItem {
+    _init(name, rootScroller) {
+        super._init(name);
+        this.rootScroller = rootScroller;
 
+        // Monkey-patch scrolling - we'll leave scrolling to the rootScroller.
+        // Disable scrolling on our own menu's ScrollBox.
+        this.menu._needsScrollbar = () => false;
+        this.menu.actor.set_mouse_scrolling(false);
+    }
+
+    _subMenuOpenStateChanged(menu, open) {
+        super._subMenuOpenStateChanged(menu, open);
+
+        // we've changed the height of a submenu. Gnome doesn't handle this properly,
+        // so we need to go and tell the rootScroller that its height has changed.
+        // Copy-paste from PopupSubMenu.open().
+        {
+            const needsScrollbar = this.rootScroller._needsScrollbar();
+
+            this.rootScroller.actor.vscrollbar_policy = St.PolicyType.ALWAYS;
+
+            if (needsScrollbar)
+                this.rootScroller.actor.add_style_pseudo_class('scrolled');
+            else
+                this.rootScroller.actor.remove_style_pseudo_class('scrolled');
+        }
+
+    }
+}
+);
+
+/**
+ * @param {PopupMenu.PopupMenuBase} menu
+ * @param {NodesTree} t
+ * @param {string} indent
+ * @param {PopupMenu.PopupMenuBase | null} rootScroller
+ *   we need to keep track of the ExitNodes popupmenu so we can fix Gnome's buggy handling of nested
+ *   submenus.
+ */
+function _refreshExitNodesMenu(menu, t, indent = '', rootScroller = null) {
+    let usesExit = false;
+
+    // Add any nodes to this level of the tree
+    for (const node of t.nodes) {
+        if (!node.offersExit) {
+            continue;
+        }
+
+        const item = new PopupMenu.PopupMenuItem(indent+node.name)
+        item.connect('activate', () => {
+            cmdTailscale({ args: ["up", "--exit-node=" + node.address, "--reset"] })
+        });
+        item.setOrnament(node.usesExit ? 1 : 0)
+        menu.addMenuItem(item);
+        usesExit ||= node.usesExit;
+    }
+
+    rootScroller = rootScroller || menu;
+
+    // Add any subtress to this level of the tree
+    for (const [name, st] of Object.entries(t.subTrees)) {
+        const subMenu = new FixedSubMenuMenuItem(indent+name, rootScroller);
+
+        const stUsesExit = _refreshExitNodesMenu(subMenu.menu, st, indent+' ', rootScroller)
+
+        subMenu.setOrnament(stUsesExit ? 1 : 0)
+        menu.addMenuItem(subMenu)
+        usesExit ||= stUsesExit
+    }
+
+    return usesExit
+}
 
 function refreshExitNodesMenu() {
     exitNodeMenu.menu.removeAll();
-    var uses_exit = false;
-    nodes.sort(sortByName);
-    nodes.forEach((node) => {
-        if (node.offersExit) {
-            var item = new PopupMenu.PopupMenuItem(node.name)
-            item.connect('activate', () => {
-                cmdTailscale({ args: ["up", "--exit-node=" + node.address, "--reset"] })
-            });
-            if (node.usesExit) {
-                item.setOrnament(1);
-                exitNodeMenu.menu.addMenuItem(item);
-                uses_exit = true;
-            } else {
-                item.setOrnament(0);
-                exitNodeMenu.menu.addMenuItem(item);
-            }
-        }
-    })
+
+    const usesExit = _refreshExitNodesMenu(exitNodeMenu.menu, nodesTree);
 
     var noneItem = new PopupMenu.PopupMenuItem('None');
     noneItem.connect('activate', () => {
-        cmdTailscale({args: ["up", "--exit-node=", "--reset"] });
+        cmdTailscale({ args: ["up", "--exit-node=", "--reset"] });
     });
-    (uses_exit) ? noneItem.setOrnament(0) : noneItem.setOrnament(1);
+    noneItem.setOrnament(usesExit ? 0 : 1)
     exitNodeMenu.menu.addMenuItem(noneItem, 0);
 }
 
 function refreshSendMenu() {
     sendMenu.menu.removeAll();
-    nodes.forEach((node) => {
-        if (node.online && !node.isSelf) {
-            var item = new PopupMenu.PopupMenuItem(node.name)
-            item.connect('activate', () => {
-                sendFiles(node.address);
-            });
-            sendMenu.menu.addMenuItem(item);
+    for (const node of nodes) {
+        if (!node.online || node.isSelf || node.isMullvadExitNode) {
+            continue;
         }
-    })
+
+        var item = new PopupMenu.PopupMenuItem(node.name)
+        item.connect('activate', () => {
+            sendFiles(node.address);
+        });
+        sendMenu.menu.addMenuItem(item);
+    }
 }
 
 function sendFiles(dest) {
@@ -478,13 +602,17 @@ const TailscalePopup = GObject.registerClass(
                 }
             });
 
-            
+            // monkey-patch to nuke this property - it's buggy, if submenus are in a tree,
+            // then it causes the parent to close when a child is opened, even though the parent
+            // should stay open so you can see the child!
+            this.menu._setOpenedSubMenu = () => {};``
+
             // ------ MAIN STATUS ITEM ------
             statusItem = new PopupMenu.PopupMenuItem(statusString, { reactive: false });
 
             // ------ AUTH ITEM ------
             authItem = new PopupMenu.PopupMenuItem("Logged in", false);
-            
+
             authItem.connect('activate', () => {
                 cmdTailscaleStatus()
                 if (authUrl.length == 0) {
@@ -540,7 +668,7 @@ const TailscalePopup = GObject.registerClass(
                 }
             })
 
-            
+
             // ------ ACCEPT ROUTES ------
             acceptRoutesItem = new PopupMenu.PopupSwitchMenuItem("Accept Routes", false);
             acceptRoutesItem.connect('activate', () => {
@@ -550,7 +678,7 @@ const TailscalePopup = GObject.registerClass(
                     cmdTailscale({ args: ["up", "--accept-routes=false", "--reset"] });
                 }
             })
-            
+
             // ------ ALLOW DIRECT LAN ACCESS ------
             allowLanItem = new PopupMenu.PopupSwitchMenuItem("Allow Direct Lan Access", false);
             allowLanItem.connect('activate', () => {
@@ -571,13 +699,13 @@ const TailscalePopup = GObject.registerClass(
             receiveFilesItem.connect('activate', () => {
                 cmdTailscaleRecFiles();
             })
-            
+
             // ------ SEND FILES MENU ------
             sendMenu = new PopupMenu.PopupSubMenuMenuItem("Send Files");
-            
+
             // ------ EXIT NODES -------
             exitNodeMenu = new PopupMenu.PopupSubMenuMenuItem("Exit Nodes");
-            
+
             // ------ LOG OUT -------
             logoutButton = new PopupMenu.PopupMenuItem("Log Out");
             logoutButton.connect('activate', () => {
@@ -586,14 +714,14 @@ const TailscalePopup = GObject.registerClass(
                     addLoginServer: false,
                 });
             })
-            
+
             // ------ ABOUT MENU------
             let aboutMenu = new PopupMenu.PopupSubMenuMenuItem("About");
             let healthMenu = new PopupMenu.PopupMenuItem("Health")
             healthMenu.connect('activate', () => {
                 if (health != null) {
                     Main.notify(health.join());
-                    
+
                 } else {
                     Main.notify("null");
                 }
@@ -603,7 +731,7 @@ const TailscalePopup = GObject.registerClass(
             contributeMenu.connect('activate', () => {
                 Util.spawn(['xdg-open', "https://github.com/maxgallup/tailscale-status#contribute"])
             })
-            
+
 
             // Order Matters!
             this.menu.addMenuItem(statusSwitchItem);
@@ -645,7 +773,7 @@ export default class TailscaleStatusExtension extends Extension {
         tailscale = new TailscalePopup(this.path);
         Main.panel.addToStatusArea('tailscale', tailscale, 1);
     }
-    
+
     disable() {
 
         tailscale.destroy();
@@ -681,5 +809,3 @@ export default class TailscaleStatusExtension extends Extension {
 
     }
 }
-
-
