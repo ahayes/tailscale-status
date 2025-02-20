@@ -195,7 +195,7 @@ function setStatus(json) {
             authItem.sensitive = true;
             statusItem.label.text = statusString + "needs login";
             authItem.label.text = "Click to Login"
-            
+
             setAllItems(false);
             nodes = [];
             break;
@@ -478,13 +478,13 @@ const TailscalePopup = GObject.registerClass(
                 }
             });
 
-            
+
             // ------ MAIN STATUS ITEM ------
             statusItem = new PopupMenu.PopupMenuItem(statusString, { reactive: false });
 
             // ------ AUTH ITEM ------
             authItem = new PopupMenu.PopupMenuItem("Logged in", false);
-            
+
             authItem.connect('activate', () => {
                 cmdTailscaleStatus()
                 if (authUrl.length == 0) {
@@ -540,7 +540,7 @@ const TailscalePopup = GObject.registerClass(
                 }
             })
 
-            
+
             // ------ ACCEPT ROUTES ------
             acceptRoutesItem = new PopupMenu.PopupSwitchMenuItem("Accept Routes", false);
             acceptRoutesItem.connect('activate', () => {
@@ -550,7 +550,7 @@ const TailscalePopup = GObject.registerClass(
                     cmdTailscale({ args: ["up", "--accept-routes=false", "--reset"] });
                 }
             })
-            
+
             // ------ ALLOW DIRECT LAN ACCESS ------
             allowLanItem = new PopupMenu.PopupSwitchMenuItem("Allow Direct Lan Access", false);
             allowLanItem.connect('activate', () => {
@@ -571,13 +571,13 @@ const TailscalePopup = GObject.registerClass(
             receiveFilesItem.connect('activate', () => {
                 cmdTailscaleRecFiles();
             })
-            
+
             // ------ SEND FILES MENU ------
             sendMenu = new PopupMenu.PopupSubMenuMenuItem("Send Files");
-            
+
             // ------ EXIT NODES -------
             exitNodeMenu = new PopupMenu.PopupSubMenuMenuItem("Exit Nodes");
-            
+
             // ------ LOG OUT -------
             logoutButton = new PopupMenu.PopupMenuItem("Log Out");
             logoutButton.connect('activate', () => {
@@ -586,14 +586,14 @@ const TailscalePopup = GObject.registerClass(
                     addLoginServer: false,
                 });
             })
-            
+
             // ------ ABOUT MENU------
             let aboutMenu = new PopupMenu.PopupSubMenuMenuItem("About");
             let healthMenu = new PopupMenu.PopupMenuItem("Health")
             healthMenu.connect('activate', () => {
                 if (health != null) {
                     Main.notify(health.join());
-                    
+
                 } else {
                     Main.notify("null");
                 }
@@ -603,7 +603,7 @@ const TailscalePopup = GObject.registerClass(
             contributeMenu.connect('activate', () => {
                 Util.spawn(['xdg-open', "https://github.com/maxgallup/tailscale-status#contribute"])
             })
-            
+
 
             // Order Matters!
             this.menu.addMenuItem(statusSwitchItem);
@@ -645,7 +645,7 @@ export default class TailscaleStatusExtension extends Extension {
         tailscale = new TailscalePopup(this.path);
         Main.panel.addToStatusArea('tailscale', tailscale, 1);
     }
-    
+
     disable() {
 
         tailscale.destroy();
@@ -681,5 +681,3 @@ export default class TailscaleStatusExtension extends Extension {
 
     }
 }
-
-
