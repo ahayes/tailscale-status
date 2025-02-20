@@ -1,5 +1,4 @@
 
-
 # Run this in a terminal window to see the logs from the extensions and if on X11 
 # hit F2 and type "r" to restart gnome-shell to apply any changes.
 debug:
@@ -19,3 +18,6 @@ link:
 # Resulting zip used to submit to gnome extensions
 zip:
 	cd tailscale-status@maxgallup.github.com && zip -r ../tailscale-status@maxgallup.github.com.zip *
+
+clean:
+	rm tailscale-status@maxgallup.github.com.zip
