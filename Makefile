@@ -12,8 +12,8 @@ test-wayland:
 # it since I've experienced some kind of caching or automated upgrading which would update 
 # the extension to the latest version.
 link:
-	cd $$HOME/oss/tailscale-status/tailscale-status@maxgallup.github.com && glib-compile-schemas schemas/
-	ln -s $$HOME/oss/tailscale-status/tailscale-status@maxgallup.github.com $$HOME/.local/share/gnome-shell/extensions/tailscale-status@maxgallup.github.com
+	cd $$PWD/tailscale-status@maxgallup.github.com && glib-compile-schemas schemas/
+	ln -s $$PWD/tailscale-status@maxgallup.github.com $$HOME/.local/share/gnome-shell/extensions/tailscale-status@maxgallup.github.com
 
 # Resulting zip used to submit to gnome extensions
 zip:
