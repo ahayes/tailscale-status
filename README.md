@@ -31,9 +31,10 @@ Enable the extension in *Extensions* or *Extension Manager*.
 You might have to log in and out for the extension to be loaded.
 
 ### Contribute
-Feel free to open pull requests or raise issues, but please add a detailed description of exactly what is happening. Additionally please adhere to the [review guidlines](https://gjs.guide/extensions/review-guidelines/review-guidelines.html#basics) as much as possible.
+Sadly, we must maintain two separate branches for before and after gnome 45 due to breaking changes. Make pull requests to the correct respective branch. Additionally, please adhere to the [review guidlines](https://gjs.guide/extensions/review-guidelines/review-guidelines.html#basics) as much as possible.
+
+The Makefile includes useful targets for development. If running on wayland, use `make test-wayland` to open a nested gnome sessions.
 
 ### TODOs
 - [ ] Rewrite extension to utilize tailscale api instead of running `tailscale` commands.
-- [ ] Implement #23
 
