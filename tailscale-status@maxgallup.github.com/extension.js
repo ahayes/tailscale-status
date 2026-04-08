@@ -2,7 +2,6 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import St from 'gi://St';
 import Clutter from 'gi://Clutter';
 
-import * as ExtensionUtils from 'resource:///org/gnome/shell/misc/extensionUtils.js';
 import * as Util from 'resource:///org/gnome/shell/misc/util.js';
 
 import GObject from 'gi://GObject';
