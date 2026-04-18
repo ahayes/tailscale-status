@@ -6,5 +6,5 @@
   "shell-version": ["45", "46", "47", "48", "49", "50"],
   "url": "https://github.com/maxgallup/tailscale-status",
   "uuid": "tailscale-status@maxgallup.github.com",
-  "version": 21
+  "version": 20
 }
